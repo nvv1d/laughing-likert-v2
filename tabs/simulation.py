@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -191,17 +190,42 @@ def render_simulation_tab(df):
                     orig_counts = df[selected_item].value_counts(normalize=True).sort_index() * 100
                     sim_counts = st.session_state.sim_data[selected_item].value_counts(normalize=True).sort_index() * 100
                     
-                    comparison_df = pd.DataFrame({
-                        'Response': sorted(set(orig_counts.index) | set(sim_counts.index)),
-                        'Original (%)': [orig_counts.get(i, 0) for i in sorted(set(orig_counts.index) | set(sim_counts.index))],
-                        'Simulated (%)': [sim_counts.get(i, 0) for i in sorted(set(orig_counts.index) | set(sim_counts.index))],
-                    })
-                    
-                    # Format as percentages with 1 decimal point
-                    comparison_df['Original (%)'] = comparison_df['Original (%)'].apply(lambda x: f"{x:.1f}%")
-                    comparison_df['Simulated (%)'] = comparison_df['Simulated (%)'].apply(lambda x: f"{x:.1f}%")
-                    
-                    st.dataframe(comparison_df)
+                    # FIX: Handle mixed data types when combining indices
+                    try:
+                        # Get all unique response values
+                        all_responses = set(orig_counts.index) | set(sim_counts.index)
+                        
+                        # Convert all to strings for consistent sorting, then convert back if they're all numeric
+                        str_responses = [str(x) for x in all_responses]
+                        
+                        # Try to sort as numbers if possible, otherwise sort as strings
+                        try:
+                            # Check if all can be converted to numbers
+                            numeric_responses = [float(x) for x in str_responses]
+                            sorted_responses = sorted(all_responses, key=lambda x: float(x))
+                        except (ValueError, TypeError):
+                            # If not all numeric, sort as strings
+                            sorted_responses = sorted(all_responses, key=str)
+                        
+                        comparison_df = pd.DataFrame({
+                            'Response': sorted_responses,
+                            'Original (%)': [orig_counts.get(i, 0) for i in sorted_responses],
+                            'Simulated (%)': [sim_counts.get(i, 0) for i in sorted_responses],
+                        })
+                        
+                        # Format as percentages with 1 decimal point
+                        comparison_df['Original (%)'] = comparison_df['Original (%)'].apply(lambda x: f"{x:.1f}%")
+                        comparison_df['Simulated (%)'] = comparison_df['Simulated (%)'].apply(lambda x: f"{x:.1f}%")
+                        
+                        st.dataframe(comparison_df)
+                        
+                    except Exception as e:
+                        st.error(f"Error creating response percentage comparison: {str(e)}")
+                        # Fallback: show basic statistics
+                        st.write("**Original Data Distribution:**")
+                        st.write(orig_counts.to_dict())
+                        st.write("**Simulated Data Distribution:**")
+                        st.write(sim_counts.to_dict())
                     
             else:  # Show multiple items
                 # Select multiple items to compare
