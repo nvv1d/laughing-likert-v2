@@ -1,0 +1,13 @@
+pandas
+numpy
+scikit-learn
+factor-analyzer
+semopy
+jinja2
+plotly
+networkx
+pyirt
+streamlit
+matplotlib
+openpyxl
+xlrd
