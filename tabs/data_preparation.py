@@ -520,11 +520,16 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
                                 remaining_items = [i for i in scale_items if i != item]
                                 alpha_if_deleted = cronbach_alpha(df, remaining_items) if len(remaining_items) > 1 else 0
                                 
+                                # Get the original alpha for this scale
+                                scale_index = list(multi_item_scales.keys()).index(selected_scale)
+                                original_alpha_str = reliability_results[scale_index]['Cronbach α']
+                                original_alpha = float(original_alpha_str)
+                                
                                 item_stats.append({
                                     'Item': item,
                                     'Item-Total Correlation': f"{item_total_corr:.3f}",
                                     'Alpha if Deleted': f"{alpha_if_deleted:.3f}",
-                                    'Should Delete?': 'Consider' if alpha_if_deleted > reliability_results[list(multi_item_scales.keys()).index(selected_scale)]['Cronbach α'].replace('α=', '') else 'No'
+                                    'Should Delete?': 'Consider' if alpha_if_deleted > original_alpha else 'No'
                                 })
                             
                             st.dataframe(pd.DataFrame(item_stats))
