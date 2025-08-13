@@ -311,62 +311,165 @@ def _render_statistical_comparison(df):
         try:
             # Basic descriptive statistics comparison
             with st.expander("Descriptive Statistics Comparison", expanded=True):
-                real_desc = df[st.session_state.likert_items].describe().T
-                sim_desc = st.session_state.sim_data[st.session_state.likert_items].describe().T
+                # Filter to only numeric columns for statistical analysis
+                numeric_items = []
+                for item in st.session_state.likert_items:
+                    if item in df.columns and item in st.session_state.sim_data.columns:
+                        # Check if both original and simulated data for this item are numeric
+                        try:
+                            pd.to_numeric(df[item], errors='raise')
+                            pd.to_numeric(st.session_state.sim_data[item], errors='raise')
+                            numeric_items.append(item)
+                        except (ValueError, TypeError):
+                            continue
+                
+                if not numeric_items:
+                    st.warning("No numeric items found for statistical comparison.")
+                    return
+                
+                # Convert to numeric to ensure consistent data types
+                real_numeric = df[numeric_items].apply(pd.to_numeric, errors='coerce')
+                sim_numeric = st.session_state.sim_data[numeric_items].apply(pd.to_numeric, errors='coerce')
+                
+                # Remove any remaining NaN values
+                real_numeric = real_numeric.dropna()
+                sim_numeric = sim_numeric.dropna()
+                
+                if real_numeric.empty or sim_numeric.empty:
+                    st.warning("No valid numeric data available for comparison after cleaning.")
+                    return
+                
+                real_desc = real_numeric.describe().T
+                sim_desc = sim_numeric.describe().T
                 
                 # Calculate additional statistics
-                real_desc['var'] = df[st.session_state.likert_items].var()
-                sim_desc['var'] = st.session_state.sim_data[st.session_state.likert_items].var()
+                real_desc['var'] = real_numeric.var()
+                sim_desc['var'] = sim_numeric.var()
                 
-                real_desc['skew'] = df[st.session_state.likert_items].skew()
-                sim_desc['skew'] = st.session_state.sim_data[st.session_state.likert_items].skew()
+                real_desc['skew'] = real_numeric.skew()
+                sim_desc['skew'] = sim_numeric.skew()
                 
                 # Calculate mean absolute differences
                 stats_diff = {}
                 metrics = ['mean', 'std', 'var', 'skew', 'min', '25%', '50%', '75%', 'max']
+                
                 for metric in metrics:
                     if metric in real_desc.columns and metric in sim_desc.columns:
-                        diff = abs(real_desc[metric] - sim_desc[metric])
-                        stats_diff[metric] = diff.mean()
+                        # Ensure both are numeric before subtraction
+                        real_metric = pd.to_numeric(real_desc[metric], errors='coerce')
+                        sim_metric = pd.to_numeric(sim_desc[metric], errors='coerce')
+                        
+                        # Only calculate difference for items present in both datasets
+                        common_items = real_metric.index.intersection(sim_metric.index)
+                        if len(common_items) > 0:
+                            diff = abs(real_metric[common_items] - sim_metric[common_items])
+                            stats_diff[metric] = diff.mean()
                 
-                # Overall similarity score
-                overall_similarity = sum(max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()) / len(stats_diff)
-                st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
+                if stats_diff:
+                    # Overall similarity score
+                    overall_similarity = sum(max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()) / len(stats_diff)
+                    st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
+                    
+                    # Show detailed comparison table
+                    comparison_data = []
+                    for item in common_items:
+                        row_data = {'Item': item}
+                        for metric in ['mean', 'std', 'var']:
+                            if metric in real_desc.columns and metric in sim_desc.columns:
+                                real_val = pd.to_numeric(real_desc.loc[item, metric], errors='coerce')
+                                sim_val = pd.to_numeric(sim_desc.loc[item, metric], errors='coerce')
+                                row_data[f'Real_{metric}'] = real_val
+                                row_data[f'Sim_{metric}'] = sim_val
+                                row_data[f'Diff_{metric}'] = abs(real_val - sim_val) if pd.notna(real_val) and pd.notna(sim_val) else np.nan
+                        comparison_data.append(row_data)
+                    
+                    if comparison_data:
+                        comparison_df = pd.DataFrame(comparison_data)
+                        st.dataframe(comparison_df.round(3))
+                else:
+                    st.warning("Could not calculate statistical differences.")
             
             # Correlation structure comparison
             with st.expander("Correlation Structure Comparison", expanded=True):
-                real_corr = df[st.session_state.likert_items].corr()
-                sim_corr = st.session_state.sim_data[st.session_state.likert_items].corr()
-                
-                # Calculate correlation matrix difference
-                corr_diff = abs(real_corr - sim_corr)
-                mean_diff = corr_diff.values[np.triu_indices_from(corr_diff.values, k=1)].mean()
-                corr_similarity = max(0, 100 - (mean_diff * 100))
-                st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
+                try:
+                    # Use only numeric items for correlation analysis
+                    if len(numeric_items) < 2:
+                        st.warning("Need at least 2 numeric items for correlation analysis.")
+                    else:
+                        real_corr = real_numeric.corr()
+                        sim_corr = sim_numeric.corr()
+                        
+                        # Calculate correlation matrix difference
+                        corr_diff = abs(real_corr - sim_corr)
+                        
+                        # Get upper triangle indices (excluding diagonal)
+                        mask = np.triu(np.ones_like(corr_diff.values, dtype=bool), k=1)
+                        upper_triangle_diff = corr_diff.values[mask]
+                        
+                        if len(upper_triangle_diff) > 0:
+                            mean_diff = np.nanmean(upper_triangle_diff)
+                            corr_similarity = max(0, 100 - (mean_diff * 100))
+                            st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
+                            
+                            # Show correlation comparison
+                            st.write("**Average Correlations:**")
+                            avg_real_corr = np.nanmean(real_corr.values[mask])
+                            avg_sim_corr = np.nanmean(sim_corr.values[mask])
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Real Data Avg Correlation", f"{avg_real_corr:.3f}")
+                            with col2:
+                                st.metric("Simulated Data Avg Correlation", f"{avg_sim_corr:.3f}")
+                        else:
+                            st.warning("Could not calculate correlation differences.")
+                            
+                except Exception as corr_error:
+                    st.warning(f"Correlation analysis failed: {str(corr_error)}")
             
             # Reliability comparison
             if st.session_state.clusters:
                 with st.expander("Reliability Comparison", expanded=True):
-                    alpha_data = []
-                    for sc, items in st.session_state.clusters.items():
-                        if len(items) > 1 and all(item in st.session_state.sim_data.columns for item in items):
-                            orig_alpha = st.session_state.alphas.get(sc, 0)
-                            sim_alpha = cronbach_alpha(st.session_state.sim_data, items)
-                            alpha_diff = abs(orig_alpha - sim_alpha)
-                            alpha_similarity = max(0, 100 - (alpha_diff * 100))
+                    try:
+                        alpha_data = []
+                        for sc, items in st.session_state.clusters.items():
+                            # Filter to only numeric items in this cluster
+                            numeric_cluster_items = [item for item in items if item in numeric_items]
                             
-                            alpha_data.append({
-                                'Cluster': sc,
-                                'Original Alpha': orig_alpha,
-                                'Simulated Alpha': sim_alpha,
-                                'Similarity (%)': alpha_similarity
-                            })
-                    
-                    if alpha_data:
-                        alpha_df = pd.DataFrame(alpha_data)
-                        st.dataframe(alpha_df)
-                        reliability_similarity = alpha_df['Similarity (%)'].mean()
-                        st.metric("Overall Reliability Similarity", f"{reliability_similarity:.2f}%")
+                            if len(numeric_cluster_items) > 1 and all(item in st.session_state.sim_data.columns for item in numeric_cluster_items):
+                                orig_alpha = st.session_state.alphas.get(sc, 0)
+                                
+                                # Calculate Cronbach's alpha for simulated data
+                                try:
+                                    sim_alpha = cronbach_alpha(sim_numeric, numeric_cluster_items)
+                                    alpha_diff = abs(orig_alpha - sim_alpha)
+                                    alpha_similarity = max(0, 100 - (alpha_diff * 100))
+                                    
+                                    alpha_data.append({
+                                        'Cluster': sc,
+                                        'Items_Count': len(numeric_cluster_items),
+                                        'Original Alpha': round(orig_alpha, 3),
+                                        'Simulated Alpha': round(sim_alpha, 3),
+                                        'Difference': round(alpha_diff, 3),
+                                        'Similarity (%)': round(alpha_similarity, 1)
+                                    })
+                                except Exception as alpha_error:
+                                    st.warning(f"Could not calculate alpha for cluster {sc}: {str(alpha_error)}")
+                        
+                        if alpha_data:
+                            alpha_df = pd.DataFrame(alpha_data)
+                            st.dataframe(alpha_df)
+                            reliability_similarity = alpha_df['Similarity (%)'].mean()
+                            st.metric("Overall Reliability Similarity", f"{reliability_similarity:.2f}%")
+                        else:
+                            st.warning("No reliability comparisons could be calculated.")
+                            
+                    except Exception as reliability_error:
+                        st.warning(f"Reliability analysis failed: {str(reliability_error)}")
             
         except Exception as e:
             st.error(f"Error performing statistical comparison: {str(e)}")
+            st.write("**Debug Info:**")
+            st.write(f"Available items: {st.session_state.likert_items[:5]}...")
+            st.write(f"Data types in original: {df[st.session_state.likert_items[:3]].dtypes.to_dict()}")
+            st.write(f"Data types in simulated: {st.session_state.sim_data[st.session_state.likert_items[:3]].dtypes.to_dict()}")
