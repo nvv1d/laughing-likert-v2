@@ -282,14 +282,14 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
                     st.warning("⚠️ No clear naming patterns detected. Items may not follow standard naming conventions (e.g., A1, A2, B1, B2).")
 
         # Show detected scales if available
-        if st.session_state.detected_scales:
+        if st.session_state.get('detected_scales', {}):
             st.subheader("📋 Detected Scales")
 
             # Calculate reliability for each detected scale
             scale_reliability = {}
             reliability_details = []
 
-            for scale_name, scale_items in st.session_state.detected_scales.items():
+            for scale_name, scale_items in st.session_state.get('detected_scales', {}).items():
                 # Filter items that actually exist in the data
                 valid_items = [item for item in scale_items if item in df.columns]
 
