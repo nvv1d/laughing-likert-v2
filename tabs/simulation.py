@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -381,45 +380,49 @@ def render_simulation_tab(df):
                     st.subheader(f"Response Percentages: {selected_item}")
                     
                     # Create a DataFrame with percentages for comparison
-                    orig_counts = df[selected_item].value_counts(normalize=True).sort_index() * 100
-                    sim_counts = st.session_state.sim_data[selected_item].value_counts(normalize=True).sort_index() * 100
-                    
-                    # Handle mixed data types when combining indices
                     try:
+                        orig_series = pd.to_numeric(df[selected_item], errors='coerce').dropna()
+                        sim_series = pd.to_numeric(st.session_state.sim_data[selected_item], errors='coerce').dropna()
+                        
+                        orig_counts = orig_series.value_counts(normalize=True).sort_index() * 100
+                        sim_counts = sim_series.value_counts(normalize=True).sort_index() * 100
+                        
                         # Get all unique response values
                         all_responses = set(orig_counts.index) | set(sim_counts.index)
                         
-                        # Convert all to strings for consistent sorting, then convert back if they're all numeric
-                        str_responses = [str(x) for x in all_responses]
+                        # Sort responses numerically
+                        sorted_responses = sorted(all_responses)
                         
-                        # Try to sort as numbers if possible, otherwise sort as strings
-                        try:
-                            # Check if all can be converted to numbers
-                            numeric_responses = [float(x) for x in str_responses]
-                            sorted_responses = sorted(all_responses, key=lambda x: float(x))
-                        except (ValueError, TypeError):
-                            # If not all numeric, sort as strings
-                            sorted_responses = sorted(all_responses, key=str)
+                        comparison_data = []
+                        for response in sorted_responses:
+                            comparison_data.append({
+                                'Response': int(response),  # Ensure integer type
+                                'Weight': float(st.session_state.weights.get(selected_item, {}).get('weights', {}).get(str(response), 0.0)),  # Ensure float type
+                                'Original (%)': f"{orig_counts.get(response, 0):.1f}%",
+                                'Simulated (%)': f"{sim_counts.get(response, 0):.1f}%"
+                            })
                         
-                        comparison_df = pd.DataFrame({
-                            'Response': sorted_responses,
-                            'Original (%)': [orig_counts.get(i, 0) for i in sorted_responses],
-                            'Simulated (%)': [sim_counts.get(i, 0) for i in sorted_responses],
-                        })
-                        
-                        # Format as percentages with 1 decimal point
-                        comparison_df['Original (%)'] = comparison_df['Original (%)'].apply(lambda x: f"{x:.1f}%")
-                        comparison_df['Simulated (%)'] = comparison_df['Simulated (%)'].apply(lambda x: f"{x:.1f}%")
-                        
+                        comparison_df = pd.DataFrame(comparison_data)
                         st.dataframe(comparison_df)
                         
                     except Exception as e:
                         st.error(f"Error creating response percentage comparison: {str(e)}")
                         # Fallback: show basic statistics
                         st.write("**Original Data Distribution:**")
-                        st.write(orig_counts.to_dict())
+                        try:
+                            orig_dist = df[selected_item].value_counts(normalize=True) * 100
+                            for val, pct in orig_dist.items():
+                                st.write(f"  {val}: {pct:.1f}%")
+                        except:
+                            st.write("Could not calculate original distribution")
+                        
                         st.write("**Simulated Data Distribution:**")
-                        st.write(sim_counts.to_dict())
+                        try:
+                            sim_dist = st.session_state.sim_data[selected_item].value_counts(normalize=True) * 100
+                            for val, pct in sim_dist.items():
+                                st.write(f"  {val}: {pct:.1f}%")
+                        except:
+                            st.write("Could not calculate simulated distribution")
                     
             else:  # Show multiple items
                 # Select multiple items to compare
@@ -506,19 +509,26 @@ def _render_comprehensive_statistical_comparison(df):
         try:
             # 1. Basic descriptive statistics comparison
             with st.expander("Descriptive Statistics Comparison", expanded=True):
+                # Ensure all likert items are numeric to prevent type errors
+                real_data_numeric = df[st.session_state.likert_items].apply(pd.to_numeric, errors='coerce')
+                sim_data_numeric = st.session_state.sim_data[st.session_state.likert_items].apply(pd.to_numeric, errors='coerce')
+                
                 # Calculate descriptive statistics
-                real_desc = df[st.session_state.likert_items].describe().T
-                sim_desc = st.session_state.sim_data[st.session_state.likert_items].describe().T
+                real_desc = real_data_numeric.describe().T
+                sim_desc = sim_data_numeric.describe().T
                 
-                # Calculate additional statistics
-                real_desc['var'] = df[st.session_state.likert_items].var()
-                sim_desc['var'] = st.session_state.sim_data[st.session_state.likert_items].var()
-                
-                real_desc['skew'] = df[st.session_state.likert_items].skew()
-                sim_desc['skew'] = st.session_state.sim_data[st.session_state.likert_items].skew()
-                
-                real_desc['kurtosis'] = df[st.session_state.likert_items].kurtosis()
-                sim_desc['kurtosis'] = st.session_state.sim_data[st.session_state.likert_items].kurtosis()
+                # Calculate additional statistics with error handling
+                try:
+                    real_desc['var'] = real_data_numeric.var()
+                    sim_desc['var'] = sim_data_numeric.var()
+                    
+                    real_desc['skew'] = real_data_numeric.skew()
+                    sim_desc['skew'] = sim_data_numeric.skew()
+                    
+                    real_desc['kurtosis'] = real_data_numeric.kurtosis()
+                    sim_desc['kurtosis'] = sim_data_numeric.kurtosis()
+                except Exception as e:
+                    st.warning(f"Could not calculate some advanced statistics: {str(e)}")
                 
                 # Calculate mean absolute differences between real and simulated statistics
                 stats_diff = {}
@@ -529,104 +539,118 @@ def _render_comprehensive_statistical_comparison(df):
                             # Ensure both are numeric before subtraction
                             real_vals = pd.to_numeric(real_desc[metric], errors='coerce')
                             sim_vals = pd.to_numeric(sim_desc[metric], errors='coerce')
-                            diff = abs(real_vals - sim_vals)
-                            stats_diff[metric] = diff.mean()
+                            
+                            # Remove NaN values before calculation
+                            valid_mask = ~(real_vals.isna() | sim_vals.isna())
+                            if valid_mask.any():
+                                diff = abs(real_vals[valid_mask] - sim_vals[valid_mask])
+                                stats_diff[metric] = diff.mean()
                         except Exception as e:
                             st.warning(f"Could not calculate difference for {metric}: {str(e)}")
                             continue
                 
                 # Create comparison charts for key metrics
-                selected_stats = st.multiselect(
-                    "Select statistics to compare", 
-                    options=list(stats_diff.keys()),
-                    default=['mean', 'std', 'var']
-                )
-                
-                for stat in selected_stats:
-                    st.subheader(f"Comparison of {stat.capitalize()}")
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=real_desc.index,
-                        y=real_desc[stat],
-                        name="Original",
-                        marker_color='blue'
-                    ))
-                    fig.add_trace(go.Bar(
-                        x=sim_desc.index,
-                        y=sim_desc[stat],
-                        name="Simulated",
-                        marker_color='red'
-                    ))
-                    fig.update_layout(
-                        title=f"{stat.capitalize()} Comparison",
-                        barmode='group',
-                        height=400
+                available_stats = list(stats_diff.keys())
+                if available_stats:
+                    default_stats = [stat for stat in ['mean', 'std', 'var'] if stat in available_stats]
+                    selected_stats = st.multiselect(
+                        "Select statistics to compare", 
+                        options=available_stats,
+                        default=default_stats[:3] if default_stats else available_stats[:3]
                     )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Overall similarity scores
-                st.subheader("Similarity Metrics")
-                if stats_diff:
-                    similarity_df = pd.DataFrame({
-                        'Statistic': list(stats_diff.keys()),
-                        'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
-                        'Similarity Score (%)': [max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()]
-                    })
-                    st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
                     
-                    # Overall similarity score
-                    overall_similarity = similarity_df['Similarity Score (%)'].mean()
+                    for stat in selected_stats:
+                        st.subheader(f"Comparison of {stat.capitalize()}")
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=real_desc.index,
+                            y=pd.to_numeric(real_desc[stat], errors='coerce'),
+                            name="Original",
+                            marker_color='blue'
+                        ))
+                        fig.add_trace(go.Bar(
+                            x=sim_desc.index,
+                            y=pd.to_numeric(sim_desc[stat], errors='coerce'),
+                            name="Simulated",
+                            marker_color='red'
+                        ))
+                        fig.update_layout(
+                            title=f"{stat.capitalize()} Comparison",
+                            barmode='group',
+                            height=400
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Overall similarity scores
+                    st.subheader("Similarity Metrics")
+                    if stats_diff:
+                        similarity_df = pd.DataFrame({
+                            'Statistic': list(stats_diff.keys()),
+                            'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
+                            'Similarity Score (%)': [max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()]
+                        })
+                        st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
+                        
+                        # Overall similarity score
+                        overall_similarity = similarity_df['Similarity Score (%)'].mean()
+                    else:
+                        st.warning("No valid statistics could be compared.")
+                        overall_similarity = 0
+                    st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
                 else:
-                    st.warning("No valid statistics could be compared.")
+                    st.error("No statistics could be calculated. Please check your data types.")
                     overall_similarity = 0
-                st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
             
             # 2. Correlation structure comparison
             with st.expander("Correlation Structure Comparison", expanded=True):
-                # Calculate correlation matrices
-                real_corr = df[st.session_state.likert_items].corr()
-                sim_corr = st.session_state.sim_data[st.session_state.likert_items].corr()
-                
-                # Calculate correlation matrix difference
-                corr_diff = abs(real_corr - sim_corr)
-                
-                # Display side-by-side correlation heatmaps
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.write("Original Correlation Matrix")
-                    fig = px.imshow(
-                        real_corr, 
-                        title="Original Data Correlations",
-                        color_continuous_scale="Blues",
-                        zmin=-1, zmax=1
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    st.write("Simulated Correlation Matrix")
-                    fig = px.imshow(
-                        sim_corr, 
-                        title="Simulated Data Correlations",
-                        color_continuous_scale="Reds",
-                        zmin=-1, zmax=1
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with col3:
-                    st.write("Difference Matrix")
-                    fig = px.imshow(
-                        corr_diff, 
-                        title="Correlation Difference (Absolute)",
-                        color_continuous_scale="Greens",
-                        zmin=0, zmax=2
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Calculate overall correlation similarity
-                mean_diff = corr_diff.values[np.triu_indices_from(corr_diff.values, k=1)].mean()
-                corr_similarity = max(0, 100 - (mean_diff * 100))
-                st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
+                try:
+                    # Calculate correlation matrices with numeric data only
+                    real_corr = real_data_numeric.corr()
+                    sim_corr = sim_data_numeric.corr()
+                    
+                    # Calculate correlation matrix difference
+                    corr_diff = abs(real_corr - sim_corr)
+                    
+                    # Display side-by-side correlation heatmaps
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.write("Original Correlation Matrix")
+                        fig = px.imshow(
+                            real_corr, 
+                            title="Original Data Correlations",
+                            color_continuous_scale="Blues",
+                            zmin=-1, zmax=1
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        st.write("Simulated Correlation Matrix")
+                        fig = px.imshow(
+                            sim_corr, 
+                            title="Simulated Data Correlations",
+                            color_continuous_scale="Reds",
+                            zmin=-1, zmax=1
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col3:
+                        st.write("Difference Matrix")
+                        fig = px.imshow(
+                            corr_diff, 
+                            title="Correlation Difference (Absolute)",
+                            color_continuous_scale="Greens",
+                            zmin=0, zmax=2
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Calculate overall correlation similarity
+                    mean_diff = corr_diff.values[np.triu_indices_from(corr_diff.values, k=1)].mean()
+                    corr_similarity = max(0, 100 - (mean_diff * 100))
+                    st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
+                except Exception as e:
+                    st.error(f"Error calculating correlations: {str(e)}")
+                    corr_similarity = 0
             
             # 3. Distribution comparison
             with st.expander("Distribution Comparison", expanded=True):
@@ -643,24 +667,27 @@ def _render_comprehensive_statistical_comparison(df):
                     js_distances = {}
                     
                     for item in dist_items:
-                        # Calculate distribution proportions
-                        real_dist = df[item].value_counts(normalize=True).sort_index()
-                        sim_dist = st.session_state.sim_data[item].value_counts(normalize=True).sort_index()
-                        
-                        # Ensure both distributions have the same categories
-                        all_values = sorted(set(real_dist.index) | set(sim_dist.index))
-                        real_probs = np.array([real_dist.get(val, 0) for val in all_values])
-                        sim_probs = np.array([sim_dist.get(val, 0) for val in all_values])
-                        
-                        # Avoid zero probabilities for KL divergence
-                        real_probs = np.clip(real_probs, 1e-10, 1.0)
-                        sim_probs = np.clip(sim_probs, 1e-10, 1.0)
-                        
-                        # Normalize to sum to 1
-                        real_probs = real_probs / real_probs.sum()
-                        sim_probs = sim_probs / sim_probs.sum()
-                        
                         try:
+                            # Calculate distribution proportions with proper data type handling
+                            real_series = pd.to_numeric(df[item], errors='coerce').dropna()
+                            sim_series = pd.to_numeric(st.session_state.sim_data[item], errors='coerce').dropna()
+                            
+                            real_dist = real_series.value_counts(normalize=True).sort_index()
+                            sim_dist = sim_series.value_counts(normalize=True).sort_index()
+                            
+                            # Ensure both distributions have the same categories
+                            all_values = sorted(set(real_dist.index) | set(sim_dist.index))
+                            real_probs = np.array([real_dist.get(val, 0) for val in all_values])
+                            sim_probs = np.array([sim_dist.get(val, 0) for val in all_values])
+                            
+                            # Avoid zero probabilities for KL divergence
+                            real_probs = np.clip(real_probs, 1e-10, 1.0)
+                            sim_probs = np.clip(sim_probs, 1e-10, 1.0)
+                            
+                            # Normalize to sum to 1
+                            real_probs = real_probs / real_probs.sum()
+                            sim_probs = sim_probs / sim_probs.sum()
+                            
                             # Calculate KL divergence: D_KL(P||Q)
                             kl_div = np.sum(real_probs * np.log(real_probs / sim_probs))
                             kl_divergences[item] = kl_div
@@ -672,18 +699,24 @@ def _render_comprehensive_statistical_comparison(df):
                         except Exception as e:
                             st.warning(f"Could not calculate divergence for item {item}: {str(e)}")
                     
-                    # Display the divergence measures
-                    divergence_df = pd.DataFrame({
-                        'Item': list(kl_divergences.keys()),
-                        'KL Divergence': list(kl_divergences.values()),
-                        'JS Distance': list(js_distances.values()),
-                        'Distribution Similarity (%)': [max(0, 100 - (js * 100)) for js in js_distances.values()]
-                    })
-                    st.dataframe(divergence_df.sort_values('Distribution Similarity (%)', ascending=False))
-                    
-                    # Overall distribution similarity
-                    dist_similarity = divergence_df['Distribution Similarity (%)'].mean()
-                    st.metric("Overall Distribution Similarity", f"{dist_similarity:.2f}%")
+                    if kl_divergences and js_distances:
+                        # Display the divergence measures
+                        divergence_df = pd.DataFrame({
+                            'Item': list(kl_divergences.keys()),
+                            'KL Divergence': list(kl_divergences.values()),
+                            'JS Distance': list(js_distances.values()),
+                            'Distribution Similarity (%)': [max(0, 100 - (js * 100)) for js in js_distances.values()]
+                        })
+                        st.dataframe(divergence_df.sort_values('Distribution Similarity (%)', ascending=False))
+                        
+                        # Overall distribution similarity
+                        dist_similarity = divergence_df['Distribution Similarity (%)'].mean()
+                        st.metric("Overall Distribution Similarity", f"{dist_similarity:.2f}%")
+                    else:
+                        st.warning("Could not calculate distribution similarities for selected items.")
+                        dist_similarity = 0
+                else:
+                    dist_similarity = 0
             
             # 4. Reliability Measures (Cronbach's Alpha comparison)
             if st.session_state.clusters:
@@ -741,6 +774,11 @@ def _render_comprehensive_statistical_comparison(df):
                                 
                                 # Suggestions for improvement
                                 st.info("💡 Suggestions: Use a larger dataset or try adjusting noise level or using different item weights extraction methods.")
+                        else:
+                            reliability_similarity = 0
+                    else:
+                        st.warning("No valid clusters found for reliability comparison.")
+                        reliability_similarity = 0
             
             # Final combined score
             overall_metrics = []
@@ -814,5 +852,7 @@ def _render_comprehensive_statistical_comparison(df):
                 
         except Exception as e:
             st.error(f"Error performing statistical comparison: {str(e)}")
+            import traceback
+            st.error(f"Detailed error: {traceback.format_exc()}")
     else:
         st.info("Click the 'Compare Real vs Simulated Data' button above for a comprehensive statistical comparison between your original and simulated data.")
