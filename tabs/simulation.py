@@ -180,9 +180,9 @@ def render_simulation_tab(df):
                     max_value=1.0,
                     value=0.3,
                     step=0.05,
-                    format_func=lambda x: f"{x*100:.0f}%",
                     help="What percentage of responses should be affected by bias"
                 )
+                st.caption(f"Selected: {bias_percentage*100:.0f}%")
             
             # Bias explanation and preview
             with st.expander("🔍 Bias Configuration Preview", expanded=True):
@@ -525,8 +525,15 @@ def _render_comprehensive_statistical_comparison(df):
                 metrics = ['mean', 'std', 'var', 'skew', 'kurtosis', 'min', '25%', '50%', '75%', 'max']
                 for metric in metrics:
                     if metric in real_desc.columns and metric in sim_desc.columns:
-                        diff = abs(real_desc[metric] - sim_desc[metric])
-                        stats_diff[metric] = diff.mean()
+                        try:
+                            # Ensure both are numeric before subtraction
+                            real_vals = pd.to_numeric(real_desc[metric], errors='coerce')
+                            sim_vals = pd.to_numeric(sim_desc[metric], errors='coerce')
+                            diff = abs(real_vals - sim_vals)
+                            stats_diff[metric] = diff.mean()
+                        except Exception as e:
+                            st.warning(f"Could not calculate difference for {metric}: {str(e)}")
+                            continue
                 
                 # Create comparison charts for key metrics
                 selected_stats = st.multiselect(
@@ -559,15 +566,19 @@ def _render_comprehensive_statistical_comparison(df):
                 
                 # Overall similarity scores
                 st.subheader("Similarity Metrics")
-                similarity_df = pd.DataFrame({
-                    'Statistic': list(stats_diff.keys()),
-                    'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
-                    'Similarity Score (%)': [max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()]
-                })
-                st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
-                
-                # Overall similarity score
-                overall_similarity = similarity_df['Similarity Score (%)'].mean()
+                if stats_diff:
+                    similarity_df = pd.DataFrame({
+                        'Statistic': list(stats_diff.keys()),
+                        'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
+                        'Similarity Score (%)': [max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()]
+                    })
+                    st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
+                    
+                    # Overall similarity score
+                    overall_similarity = similarity_df['Similarity Score (%)'].mean()
+                else:
+                    st.warning("No valid statistics could be compared.")
+                    overall_similarity = 0
                 st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
             
             # 2. Correlation structure comparison
