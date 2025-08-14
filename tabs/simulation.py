@@ -497,247 +497,322 @@ def _render_comprehensive_statistical_comparison(df):
     st.markdown("---")
     st.subheader("Statistical Comparison: Real vs Simulated Data")
     
-# Add a button to perform comprehensive statistical comparison
-analyze_button = st.button("Compare Real vs Simulated Data")
-
-if analyze_button or st.session_state.get('show_stat_analysis', False):
-    st.session_state.show_stat_analysis = True
-
-    try:
-        # --- KEY FIX: Ensure Likert items are numeric before doing anything ---
-        likert_items = st.session_state.likert_items
-        for col in likert_items:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            st.session_state.sim_data[col] = pd.to_numeric(st.session_state.sim_data[col], errors='coerce')
-
-        # Use numeric-only dataframes downstream
-        real_df = df[likert_items]
-        sim_df = st.session_state.sim_data[likert_items]
-
-        # 1. Basic descriptive statistics comparison
-        with st.expander("Descriptive Statistics Comparison", expanded=True):
-            real_desc = real_df.describe().T
-            sim_desc = sim_df.describe().T
-
-            real_desc['var'] = real_df.var()
-            sim_desc['var'] = sim_df.var()
-            real_desc['skew'] = real_df.skew()
-            sim_desc['skew'] = sim_df.skew()
-            real_desc['kurtosis'] = real_df.kurtosis()
-            sim_desc['kurtosis'] = sim_df.kurtosis()
-
-            stats_diff = {}
-            metrics = ['mean', 'std', 'var', 'skew', 'kurtosis', 'min', '25%', '50%', '75%', 'max']
-            for metric in metrics:
-                if metric in real_desc.columns and metric in sim_desc.columns:
-                    diff = (real_desc[metric] - sim_desc[metric]).abs()
-                    stats_diff[metric] = float(diff.mean())
-
-            available_metrics = list(stats_diff.keys())
-            default_metrics = [m for m in ['mean', 'std', 'var'] if m in available_metrics]
-            selected_stats = st.multiselect(
-                "Select statistics to compare",
-                options=available_metrics,
-                default=default_metrics
-            )
-
-            for stat in selected_stats:
-                st.subheader(f"Comparison of {stat.capitalize()}")
-                fig = go.Figure()
-                fig.add_trace(go.Bar(x=real_desc.index, y=real_desc[stat], name="Original", marker_color='blue'))
-                fig.add_trace(go.Bar(x=sim_desc.index, y=sim_desc[stat], name="Simulated", marker_color='red'))
-                fig.update_layout(title=f"{stat.capitalize()} Comparison", barmode='group', height=400)
-                st.plotly_chart(fig, use_container_width=True)
-
-            st.subheader("Similarity Metrics")
-            if stats_diff:
-                similarity_df = pd.DataFrame({
-                    'Statistic': list(stats_diff.keys()),
-                    'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
-                    'Similarity Score (%)': [max(0.0, 100.0 - 100.0 * stats_diff[k]) for k in stats_diff.keys()]
-                })
-                st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
-                overall_similarity = float(similarity_df['Similarity Score (%)'].mean())
-            else:
-                st.warning("No valid statistics could be compared.")
-                overall_similarity = 0.0
-
-            st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
-
-        # 2. Correlation structure comparison
-        with st.expander("Correlation Structure Comparison", expanded=True):
-            real_corr = real_df.corr()
-            sim_corr = sim_df.corr()
-            corr_diff = (real_corr - sim_corr).abs()
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write("Original Correlation Matrix")
-                fig = px.imshow(real_corr, title="Original Data Correlations",
-                                color_continuous_scale="Blues", zmin=-1, zmax=1)
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                st.write("Simulated Correlation Matrix")
-                fig = px.imshow(sim_corr, title="Simulated Data Correlations",
-                                color_continuous_scale="Reds", zmin=-1, zmax=1)
-                st.plotly_chart(fig, use_container_width=True)
-            with col3:
-                st.write("Difference Matrix")
-                fig = px.imshow(corr_diff, title="Correlation Difference (Absolute)",
-                                color_continuous_scale="Greens", zmin=0, zmax=2)
-                st.plotly_chart(fig, use_container_width=True)
-
-            if corr_diff.size:
-                tri = np.triu_indices_from(corr_diff.values, k=1)
-                mean_diff = float(corr_diff.values[tri].mean())
-                corr_similarity = max(0.0, 100.0 - (mean_diff * 100.0))
-            else:
-                corr_similarity = 0.0
-            st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
-
-        # 3. Distribution comparison
-        with st.expander("Distribution Comparison", expanded=True):
-            dist_items = st.multiselect(
-                "Select items for distribution comparison",
-                options=likert_items,
-                default=likert_items[:min(3, len(likert_items))]
-            )
-
-            if dist_items:
-                kl_divergences, js_distances = {}, {}
-                for item in dist_items:
-                    real_dist = real_df[item].value_counts(normalize=True).sort_index()
-                    sim_dist = sim_df[item].value_counts(normalize=True).sort_index()
-                    all_values = sorted(set(real_dist.index) | set(sim_dist.index))
-                    real_probs = np.array([real_dist.get(v, 0.0) for v in all_values], dtype=float)
-                    sim_probs = np.array([sim_dist.get(v, 0.0) for v in all_values], dtype=float)
-
-                    real_probs = np.clip(real_probs, 1e-10, 1.0)
-                    sim_probs = np.clip(sim_probs, 1e-10, 1.0)
-                    real_probs /= real_probs.sum()
-                    sim_probs /= sim_probs.sum()
-
-                    try:
-                        kl_div = float(np.sum(real_probs * np.log(real_probs / sim_probs)))
-                        kl_divergences[item] = kl_div
-                        m = 0.5 * (real_probs + sim_probs)
-                        js_div = 0.5 * np.sum(real_probs * np.log(real_probs / m)) + \
-                                 0.5 * np.sum(sim_probs * np.log(sim_probs / m))
-                        js_distances[item] = float(np.sqrt(js_div))
-                    except Exception as e:
-                        st.warning(f"Could not calculate divergence for item {item}: {str(e)}")
-
-                if js_distances:
+    # Add a button to perform comprehensive statistical comparison
+    analyze_button = st.button("Compare Real vs Simulated Data")
+    
+    if analyze_button or 'show_stat_analysis' in st.session_state:
+        st.session_state.show_stat_analysis = True
+        
+        try:
+            # 1. Basic descriptive statistics comparison
+            with st.expander("Descriptive Statistics Comparison", expanded=True):
+                # Calculate descriptive statistics
+                real_desc = df[st.session_state.likert_items].describe().T
+                sim_desc = st.session_state.sim_data[st.session_state.likert_items].describe().T
+                
+                # Calculate additional statistics
+                real_desc['var'] = df[st.session_state.likert_items].var()
+                sim_desc['var'] = st.session_state.sim_data[st.session_state.likert_items].var()
+                
+                real_desc['skew'] = df[st.session_state.likert_items].skew()
+                sim_desc['skew'] = st.session_state.sim_data[st.session_state.likert_items].skew()
+                
+                real_desc['kurtosis'] = df[st.session_state.likert_items].kurtosis()
+                sim_desc['kurtosis'] = st.session_state.sim_data[st.session_state.likert_items].kurtosis()
+                
+                # Calculate mean absolute differences between real and simulated statistics
+                stats_diff = {}
+                metrics = ['mean', 'std', 'var', 'skew', 'kurtosis', 'min', '25%', '50%', '75%', 'max']
+                for metric in metrics:
+                    if metric in real_desc.columns and metric in sim_desc.columns:
+                        try:
+                            # Ensure both are numeric before subtraction
+                            real_vals = pd.to_numeric(real_desc[metric], errors='coerce')
+                            sim_vals = pd.to_numeric(sim_desc[metric], errors='coerce')
+                            diff = abs(real_vals - sim_vals)
+                            stats_diff[metric] = diff.mean()
+                        except Exception as e:
+                            st.warning(f"Could not calculate difference for {metric}: {str(e)}")
+                            continue
+                
+                # Create comparison charts for key metrics
+                selected_stats = st.multiselect(
+                    "Select statistics to compare", 
+                    options=list(stats_diff.keys()),
+                    default=['mean', 'std', 'var']
+                )
+                
+                for stat in selected_stats:
+                    st.subheader(f"Comparison of {stat.capitalize()}")
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=real_desc.index,
+                        y=real_desc[stat],
+                        name="Original",
+                        marker_color='blue'
+                    ))
+                    fig.add_trace(go.Bar(
+                        x=sim_desc.index,
+                        y=sim_desc[stat],
+                        name="Simulated",
+                        marker_color='red'
+                    ))
+                    fig.update_layout(
+                        title=f"{stat.capitalize()} Comparison",
+                        barmode='group',
+                        height=400
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Overall similarity scores
+                st.subheader("Similarity Metrics")
+                if stats_diff:
+                    similarity_df = pd.DataFrame({
+                        'Statistic': list(stats_diff.keys()),
+                        'Mean Absolute Difference': [stats_diff[k] for k in stats_diff.keys()],
+                        'Similarity Score (%)': [max(0, 100 - 100 * stats_diff[k]) for k in stats_diff.keys()]
+                    })
+                    st.dataframe(similarity_df.sort_values('Similarity Score (%)', ascending=False))
+                    
+                    # Overall similarity score
+                    overall_similarity = similarity_df['Similarity Score (%)'].mean()
+                else:
+                    st.warning("No valid statistics could be compared.")
+                    overall_similarity = 0
+                st.metric("Overall Statistical Similarity", f"{overall_similarity:.2f}%")
+            
+            # 2. Correlation structure comparison
+            with st.expander("Correlation Structure Comparison", expanded=True):
+                # Calculate correlation matrices
+                real_corr = df[st.session_state.likert_items].corr()
+                sim_corr = st.session_state.sim_data[st.session_state.likert_items].corr()
+                
+                # Calculate correlation matrix difference
+                corr_diff = abs(real_corr - sim_corr)
+                
+                # Display side-by-side correlation heatmaps
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.write("Original Correlation Matrix")
+                    fig = px.imshow(
+                        real_corr, 
+                        title="Original Data Correlations",
+                        color_continuous_scale="Blues",
+                        zmin=-1, zmax=1
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    st.write("Simulated Correlation Matrix")
+                    fig = px.imshow(
+                        sim_corr, 
+                        title="Simulated Data Correlations",
+                        color_continuous_scale="Reds",
+                        zmin=-1, zmax=1
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col3:
+                    st.write("Difference Matrix")
+                    fig = px.imshow(
+                        corr_diff, 
+                        title="Correlation Difference (Absolute)",
+                        color_continuous_scale="Greens",
+                        zmin=0, zmax=2
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Calculate overall correlation similarity
+                mean_diff = corr_diff.values[np.triu_indices_from(corr_diff.values, k=1)].mean()
+                corr_similarity = max(0, 100 - (mean_diff * 100))
+                st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
+            
+            # 3. Distribution comparison
+            with st.expander("Distribution Comparison", expanded=True):
+                # Select items to compare
+                dist_items = st.multiselect(
+                    "Select items for distribution comparison",
+                    options=st.session_state.likert_items,
+                    default=st.session_state.likert_items[:min(3, len(st.session_state.likert_items))]
+                )
+                
+                if dist_items:
+                    # Calculate KL divergence for each item
+                    kl_divergences = {}
+                    js_distances = {}
+                    
+                    for item in dist_items:
+                        # Calculate distribution proportions
+                        real_dist = df[item].value_counts(normalize=True).sort_index()
+                        sim_dist = st.session_state.sim_data[item].value_counts(normalize=True).sort_index()
+                        
+                        # Ensure both distributions have the same categories
+                        all_values = sorted(set(real_dist.index) | set(sim_dist.index))
+                        real_probs = np.array([real_dist.get(val, 0) for val in all_values])
+                        sim_probs = np.array([sim_dist.get(val, 0) for val in all_values])
+                        
+                        # Avoid zero probabilities for KL divergence
+                        real_probs = np.clip(real_probs, 1e-10, 1.0)
+                        sim_probs = np.clip(sim_probs, 1e-10, 1.0)
+                        
+                        # Normalize to sum to 1
+                        real_probs = real_probs / real_probs.sum()
+                        sim_probs = sim_probs / sim_probs.sum()
+                        
+                        try:
+                            # Calculate KL divergence: D_KL(P||Q)
+                            kl_div = np.sum(real_probs * np.log(real_probs / sim_probs))
+                            kl_divergences[item] = kl_div
+                            
+                            # Calculate Jensen-Shannon distance
+                            m_dist = 0.5 * (real_probs + sim_probs)
+                            js_div = 0.5 * np.sum(real_probs * np.log(real_probs / m_dist)) + 0.5 * np.sum(sim_probs * np.log(sim_probs / m_dist))
+                            js_distances[item] = np.sqrt(js_div)  # JS distance is sqrt of JS divergence
+                        except Exception as e:
+                            st.warning(f"Could not calculate divergence for item {item}: {str(e)}")
+                    
+                    # Display the divergence measures
                     divergence_df = pd.DataFrame({
-                        'Item': list(js_distances.keys()),
-                        'KL Divergence': [kl_divergences.get(k, np.nan) for k in js_distances.keys()],
+                        'Item': list(kl_divergences.keys()),
+                        'KL Divergence': list(kl_divergences.values()),
                         'JS Distance': list(js_distances.values()),
-                        'Distribution Similarity (%)': [max(0.0, 100.0 - (js * 100.0)) for js in js_distances.values()]
+                        'Distribution Similarity (%)': [max(0, 100 - (js * 100)) for js in js_distances.values()]
                     })
                     st.dataframe(divergence_df.sort_values('Distribution Similarity (%)', ascending=False))
-                    dist_similarity = float(divergence_df['Distribution Similarity (%)'].mean())
+                    
+                    # Overall distribution similarity
+                    dist_similarity = divergence_df['Distribution Similarity (%)'].mean()
+                    st.metric("Overall Distribution Similarity", f"{dist_similarity:.2f}%")
+            
+            # 4. Reliability Measures (Cronbach's Alpha comparison)
+            if st.session_state.clusters:
+                with st.expander("Reliability Comparison", expanded=True):
+                    # Calculate alphas for original and simulated data by cluster
+                    sim_alphas = {}
+                    
+                    # First verify all required columns exist in simulated data
+                    available_items = set(st.session_state.sim_data.columns)
+                    
+                    # Make sure all items exist in the simulated data
+                    valid_items = {}
+                    for sc, items in st.session_state.clusters.items():
+                        # Check if all items in this cluster exist in the simulated data
+                        valid_cluster_items = [item for item in items if item in st.session_state.sim_data.columns]
+                        if len(valid_cluster_items) > 1:  # Need at least 2 items for reliability
+                            valid_items[sc] = valid_cluster_items
+                    
+                    if valid_items:
+                        alpha_data = []
+                        
+                        for sc, items in valid_items.items():
+                            try:
+                                orig_alpha = st.session_state.alphas.get(sc, 0)
+                                sim_alpha = cronbach_alpha(st.session_state.sim_data, items)
+                                
+                                alpha_diff = abs(orig_alpha - sim_alpha)
+                                alpha_similarity = max(0, 100 - (alpha_diff * 100))
+                                
+                                alpha_data.append({
+                                    'Cluster': sc,
+                                    'Items': len(items),
+                                    'Original Alpha': orig_alpha,
+                                    'Simulated Alpha': sim_alpha,
+                                    'Difference': alpha_diff,
+                                    'Similarity (%)': alpha_similarity
+                                })
+                            except Exception as e:
+                                st.warning(f"Could not calculate reliability for cluster {sc}: {str(e)}")
+                        
+                        # Display results table
+                        alpha_df = pd.DataFrame(alpha_data)
+                        if not alpha_df.empty:
+                            st.dataframe(alpha_df.sort_values('Similarity (%)', ascending=False))
+                            
+                            # Overall reliability similarity
+                            reliability_similarity = alpha_df['Similarity (%)'].mean()
+                            st.metric("Overall Reliability Similarity", f"{reliability_similarity:.2f}%")
+                            
+                            # Display clusters with reliability issues
+                            problem_clusters = alpha_df[alpha_df['Similarity (%)'] < 75]
+                            if not problem_clusters.empty:
+                                st.warning("The following clusters show significant reliability differences:")
+                                st.dataframe(problem_clusters[['Cluster', 'Original Alpha', 'Simulated Alpha', 'Similarity (%)']])
+                                
+                                # Suggestions for improvement
+                                st.info("💡 Suggestions: Use a larger dataset or try adjusting noise level or using different item weights extraction methods.")
+            
+            # Final combined score
+            overall_metrics = []
+            
+            if 'overall_similarity' in locals():
+                overall_metrics.append(('Statistical Descriptives', overall_similarity))
+            
+            if 'corr_similarity' in locals():
+                overall_metrics.append(('Correlation Structure', corr_similarity))
+            
+            if 'dist_similarity' in locals():
+                overall_metrics.append(('Distribution Similarity', dist_similarity))
+            
+            if 'reliability_similarity' in locals():
+                overall_metrics.append(('Reliability Metrics', reliability_similarity))
+            
+            if overall_metrics:
+                st.markdown("---")
+                st.subheader("Overall Similarity Assessment")
+                
+                final_score = sum(score for _, score in overall_metrics) / len(overall_metrics)
+                
+                # Create a gauge chart for final score
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = final_score,
+                    domain = {'x': [0, 1], 'y': [0, 1]},
+                    title = {'text': "Overall Simulation Quality"},
+                    gauge = {
+                        'axis': {'range': [0, 100]},
+                        'bar': {'color': "royalblue"},
+                        'steps': [
+                            {'range': [0, 50], 'color': "red"},
+                            {'range': [50, 75], 'color': "orange"},
+                            {'range': [75, 90], 'color': "yellow"},
+                            {'range': [90, 100], 'color': "green"}
+                        ],
+                        'threshold': {
+                            'line': {'color': "black", 'width': 4},
+                            'thickness': 0.75,
+                            'value': final_score
+                        }
+                    }
+                ))
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Individual score breakdown
+                score_df = pd.DataFrame(overall_metrics, columns=['Metric', 'Score (%)'])
+                fig = px.bar(
+                    score_df, 
+                    x='Score (%)', 
+                    y='Metric', 
+                    orientation='h',
+                    title="Component Similarity Scores",
+                    color='Score (%)',
+                    color_continuous_scale=px.colors.sequential.Viridis,
+                    range_color=[0, 100]
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Quality assessment
+                if final_score >= 90:
+                    st.success("🌟 Excellent simulation quality! The simulated data closely matches the original data across all metrics.")
+                elif final_score >= 80:
+                    st.success("✅ Good simulation quality. The simulated data captures most patterns in the original data.")
+                elif final_score >= 70:
+                    st.warning("⚠️ Fair simulation quality. The simulated data captures some patterns but has notable differences.")
                 else:
-                    st.warning("No divergence measures could be computed.")
-                    dist_similarity = 0.0
-                st.metric("Overall Distribution Similarity", f"{dist_similarity:.2f}%")
-
-        # 4. Reliability Measures
-        if st.session_state.clusters:
-            with st.expander("Reliability Comparison", expanded=True):
-                valid_items = {}
-                for sc, items in st.session_state.clusters.items():
-                    vitems = [it for it in items if it in sim_df.columns]
-                    if len(vitems) > 1:
-                        valid_items[sc] = vitems
-
-                if valid_items:
-                    alpha_data = []
-                    for sc, items in valid_items.items():
-                        try:
-                            orig_alpha_raw = st.session_state.alphas.get(sc, 0)
-                            orig_alpha = float(orig_alpha_raw) if orig_alpha_raw is not None else 0.0
-                            sim_alpha = float(cronbach_alpha(sim_df, items))
-                            alpha_diff = abs(orig_alpha - sim_alpha)
-                            alpha_similarity = max(0.0, 100.0 - (alpha_diff * 100.0))
-                            alpha_data.append({
-                                'Cluster': sc,
-                                'Items': len(items),
-                                'Original Alpha': orig_alpha,
-                                'Simulated Alpha': sim_alpha,
-                                'Difference': alpha_diff,
-                                'Similarity (%)': alpha_similarity
-                            })
-                        except Exception as e:
-                            st.warning(f"Could not calculate reliability for cluster {sc}: {str(e)}")
-
-                    alpha_df = pd.DataFrame(alpha_data)
-                    if not alpha_df.empty:
-                        st.dataframe(alpha_df.sort_values('Similarity (%)', ascending=False))
-                        reliability_similarity = float(alpha_df['Similarity (%)'].mean())
-                        st.metric("Overall Reliability Similarity", f"{reliability_similarity:.2f}%")
-
-                        problem_clusters = alpha_df[alpha_df['Similarity (%)'] < 75]
-                        if not problem_clusters.empty:
-                            st.warning("The following clusters show significant reliability differences:")
-                            st.dataframe(problem_clusters[['Cluster', 'Original Alpha', 'Simulated Alpha', 'Similarity (%)']])
-                            st.info("💡 Suggestions: Use a larger dataset or try adjusting noise level or using different item weights extraction methods.")
-
-        # Final combined score
-        overall_metrics = []
-        if 'overall_similarity' in locals():
-            overall_metrics.append(('Statistical Descriptives', overall_similarity))
-        if 'corr_similarity' in locals():
-            overall_metrics.append(('Correlation Structure', corr_similarity))
-        if 'dist_similarity' in locals():
-            overall_metrics.append(('Distribution Similarity', dist_similarity))
-        if 'reliability_similarity' in locals():
-            overall_metrics.append(('Reliability Metrics', reliability_similarity))
-
-        if overall_metrics:
-            st.markdown("---")
-            st.subheader("Overall Similarity Assessment")
-            final_score = sum(score for _, score in overall_metrics) / len(overall_metrics)
-
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=float(final_score),
-                domain={'x': [0, 1], 'y': [0, 1]},
-                title={'text': "Overall Simulation Quality"},
-                gauge={
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': "royalblue"},
-                    'steps': [
-                        {'range': [0, 50], 'color': "red"},
-                        {'range': [50, 75], 'color': "orange"},
-                        {'range': [75, 90], 'color': "yellow"},
-                        {'range': [90, 100], 'color': "green"}
-                    ],
-                    'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': float(final_score)}
-                }
-            ))
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
-
-            score_df = pd.DataFrame(overall_metrics, columns=['Metric', 'Score (%)'])
-            fig = px.bar(score_df, x='Score (%)', y='Metric', orientation='h',
-                         title="Component Similarity Scores",
-                         color='Score (%)',
-                         color_continuous_scale=px.colors.sequential.Viridis,
-                         range_color=[0, 100])
-            st.plotly_chart(fig, use_container_width=True)
-
-            if final_score >= 90:
-                st.success("🌟 Excellent simulation quality! The simulated data closely matches the original data across all metrics.")
-            elif final_score >= 80:
-                st.success("✅ Good simulation quality. The simulated data captures most patterns in the original data.")
-            elif final_score >= 70:
-                st.warning("⚠️ Fair simulation quality. The simulated data captures some patterns but has notable differences.")
-            else:
-                st.error("❌ Poor simulation quality. Consider adjusting parameters to improve results.")
-
-    except Exception as e:
-        st.error(f"Error performing statistical comparison: {str(e)}")
-else:
-    st.info("Click the 'Compare Real vs Simulated Data' button above for a comprehensive statistical comparison between your original and simulated data.")
-
-
+                    st.error("❌ Poor simulation quality. Consider adjusting parameters to improve results.")
+                
+        except Exception as e:
+            st.error(f"Error performing statistical comparison: {str(e)}")
+    else:
+        st.info("Click the 'Compare Real vs Simulated Data' button above for a comprehensive statistical comparison between your original and simulated data.")
