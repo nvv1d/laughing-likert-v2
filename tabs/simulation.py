@@ -504,29 +504,28 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
     st.session_state.show_stat_analysis = True
 
     try:
-        # --- KEY FIXES ---
-        # 1) Work only with numeric versions of the Likert items (avoids float - str errors)
+        # --- KEY FIX: Ensure Likert items are numeric before doing anything ---
         likert_items = st.session_state.likert_items
-        real_df = df[likert_items].apply(pd.to_numeric, errors='coerce')
-        sim_df  = st.session_state.sim_data[likert_items].apply(pd.to_numeric, errors='coerce')
+        for col in likert_items:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            st.session_state.sim_data[col] = pd.to_numeric(st.session_state.sim_data[col], errors='coerce')
 
-        # 2) Everything downstream uses real_df/sim_df (guaranteed numeric)
+        # Use numeric-only dataframes downstream
+        real_df = df[likert_items]
+        sim_df = st.session_state.sim_data[likert_items]
 
         # 1. Basic descriptive statistics comparison
         with st.expander("Descriptive Statistics Comparison", expanded=True):
-            # Calculate descriptive statistics
             real_desc = real_df.describe().T
-            sim_desc  = sim_df.describe().T
+            sim_desc = sim_df.describe().T
 
-            # Additional statistics
-            real_desc['var']      = real_df.var()
-            sim_desc['var']       = sim_df.var()
-            real_desc['skew']     = real_df.skew()
-            sim_desc['skew']      = sim_df.skew()
+            real_desc['var'] = real_df.var()
+            sim_desc['var'] = sim_df.var()
+            real_desc['skew'] = real_df.skew()
+            sim_desc['skew'] = sim_df.skew()
             real_desc['kurtosis'] = real_df.kurtosis()
-            sim_desc['kurtosis']  = sim_df.kurtosis()
+            sim_desc['kurtosis'] = sim_df.kurtosis()
 
-            # Mean absolute differences between real and simulated statistics
             stats_diff = {}
             metrics = ['mean', 'std', 'var', 'skew', 'kurtosis', 'min', '25%', '50%', '75%', 'max']
             for metric in metrics:
@@ -534,7 +533,6 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
                     diff = (real_desc[metric] - sim_desc[metric]).abs()
                     stats_diff[metric] = float(diff.mean())
 
-            # Comparison charts
             available_metrics = list(stats_diff.keys())
             default_metrics = [m for m in ['mean', 'std', 'var'] if m in available_metrics]
             selected_stats = st.multiselect(
@@ -546,26 +544,11 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
             for stat in selected_stats:
                 st.subheader(f"Comparison of {stat.capitalize()}")
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=real_desc.index,
-                    y=real_desc[stat],
-                    name="Original",
-                    marker_color='blue'
-                ))
-                fig.add_trace(go.Bar(
-                    x=sim_desc.index,
-                    y=sim_desc[stat],
-                    name="Simulated",
-                    marker_color='red'
-                ))
-                fig.update_layout(
-                    title=f"{stat.capitalize()} Comparison",
-                    barmode='group',
-                    height=400
-                )
+                fig.add_trace(go.Bar(x=real_desc.index, y=real_desc[stat], name="Original", marker_color='blue'))
+                fig.add_trace(go.Bar(x=sim_desc.index, y=sim_desc[stat], name="Simulated", marker_color='red'))
+                fig.update_layout(title=f"{stat.capitalize()} Comparison", barmode='group', height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Overall similarity scores
             st.subheader("Similarity Metrics")
             if stats_diff:
                 similarity_df = pd.DataFrame({
@@ -583,54 +566,33 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
 
         # 2. Correlation structure comparison
         with st.expander("Correlation Structure Comparison", expanded=True):
-            # Correlation matrices (numeric-only)
             real_corr = real_df.corr()
-            sim_corr  = sim_df.corr()
-
-            # Difference
+            sim_corr = sim_df.corr()
             corr_diff = (real_corr - sim_corr).abs()
 
-            # Side-by-side heatmaps
             col1, col2, col3 = st.columns(3)
-
             with col1:
                 st.write("Original Correlation Matrix")
-                fig = px.imshow(
-                    real_corr,
-                    title="Original Data Correlations",
-                    color_continuous_scale="Blues",
-                    zmin=-1, zmax=1
-                )
+                fig = px.imshow(real_corr, title="Original Data Correlations",
+                                color_continuous_scale="Blues", zmin=-1, zmax=1)
                 st.plotly_chart(fig, use_container_width=True)
-
             with col2:
                 st.write("Simulated Correlation Matrix")
-                fig = px.imshow(
-                    sim_corr,
-                    title="Simulated Data Correlations",
-                    color_continuous_scale="Reds",
-                    zmin=-1, zmax=1
-                )
+                fig = px.imshow(sim_corr, title="Simulated Data Correlations",
+                                color_continuous_scale="Reds", zmin=-1, zmax=1)
                 st.plotly_chart(fig, use_container_width=True)
-
             with col3:
                 st.write("Difference Matrix")
-                fig = px.imshow(
-                    corr_diff,
-                    title="Correlation Difference (Absolute)",
-                    color_continuous_scale="Greens",
-                    zmin=0, zmax=2
-                )
+                fig = px.imshow(corr_diff, title="Correlation Difference (Absolute)",
+                                color_continuous_scale="Greens", zmin=0, zmax=2)
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Overall correlation similarity (upper triangle only)
             if corr_diff.size:
                 tri = np.triu_indices_from(corr_diff.values, k=1)
                 mean_diff = float(corr_diff.values[tri].mean())
                 corr_similarity = max(0.0, 100.0 - (mean_diff * 100.0))
             else:
                 corr_similarity = 0.0
-
             st.metric("Correlation Structure Similarity", f"{corr_similarity:.2f}%")
 
         # 3. Distribution comparison
@@ -642,34 +604,25 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
             )
 
             if dist_items:
-                kl_divergences = {}
-                js_distances   = {}
-
+                kl_divergences, js_distances = {}, {}
                 for item in dist_items:
-                    # Distribution proportions
                     real_dist = real_df[item].value_counts(normalize=True).sort_index()
-                    sim_dist  = sim_df[item].value_counts(normalize=True).sort_index()
-
-                    # Align categories
+                    sim_dist = sim_df[item].value_counts(normalize=True).sort_index()
                     all_values = sorted(set(real_dist.index) | set(sim_dist.index))
                     real_probs = np.array([real_dist.get(v, 0.0) for v in all_values], dtype=float)
-                    sim_probs  = np.array([sim_dist.get(v, 0.0) for v in all_values], dtype=float)
+                    sim_probs = np.array([sim_dist.get(v, 0.0) for v in all_values], dtype=float)
 
-                    # Avoid zeros and renormalize
                     real_probs = np.clip(real_probs, 1e-10, 1.0)
-                    sim_probs  = np.clip(sim_probs,  1e-10, 1.0)
-                    real_probs = real_probs / real_probs.sum()
-                    sim_probs  = sim_probs  / sim_probs.sum()
+                    sim_probs = np.clip(sim_probs, 1e-10, 1.0)
+                    real_probs /= real_probs.sum()
+                    sim_probs /= sim_probs.sum()
 
                     try:
-                        # KL divergence: D_KL(P||Q)
                         kl_div = float(np.sum(real_probs * np.log(real_probs / sim_probs)))
                         kl_divergences[item] = kl_div
-
-                        # Jensen–Shannon distance
                         m = 0.5 * (real_probs + sim_probs)
                         js_div = 0.5 * np.sum(real_probs * np.log(real_probs / m)) + \
-                                 0.5 * np.sum(sim_probs  * np.log(sim_probs  / m))
+                                 0.5 * np.sum(sim_probs * np.log(sim_probs / m))
                         js_distances[item] = float(np.sqrt(js_div))
                     except Exception as e:
                         st.warning(f"Could not calculate divergence for item {item}: {str(e)}")
@@ -686,13 +639,11 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
                 else:
                     st.warning("No divergence measures could be computed.")
                     dist_similarity = 0.0
-
                 st.metric("Overall Distribution Similarity", f"{dist_similarity:.2f}%")
 
-        # 4. Reliability Measures (Cronbach's Alpha comparison)
+        # 4. Reliability Measures
         if st.session_state.clusters:
             with st.expander("Reliability Comparison", expanded=True):
-                # Validate items exist in simulated data
                 valid_items = {}
                 for sc, items in st.session_state.clusters.items():
                     vitems = [it for it in items if it in sim_df.columns]
@@ -703,14 +654,11 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
                     alpha_data = []
                     for sc, items in valid_items.items():
                         try:
-                            # Cast stored alpha to float (fix for 'float' - 'str' issue)
                             orig_alpha_raw = st.session_state.alphas.get(sc, 0)
                             orig_alpha = float(orig_alpha_raw) if orig_alpha_raw is not None else 0.0
-                            sim_alpha  = float(cronbach_alpha(sim_df, items))
-
-                            alpha_diff       = abs(orig_alpha - sim_alpha)
+                            sim_alpha = float(cronbach_alpha(sim_df, items))
+                            alpha_diff = abs(orig_alpha - sim_alpha)
                             alpha_similarity = max(0.0, 100.0 - (alpha_diff * 100.0))
-
                             alpha_data.append({
                                 'Cluster': sc,
                                 'Items': len(items),
@@ -728,12 +676,10 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
                         reliability_similarity = float(alpha_df['Similarity (%)'].mean())
                         st.metric("Overall Reliability Similarity", f"{reliability_similarity:.2f}%")
 
-                        # Flag clusters with issues
                         problem_clusters = alpha_df[alpha_df['Similarity (%)'] < 75]
                         if not problem_clusters.empty:
                             st.warning("The following clusters show significant reliability differences:")
                             st.dataframe(problem_clusters[['Cluster', 'Original Alpha', 'Simulated Alpha', 'Similarity (%)']])
-
                             st.info("💡 Suggestions: Use a larger dataset or try adjusting noise level or using different item weights extraction methods.")
 
         # Final combined score
@@ -750,10 +696,8 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
         if overall_metrics:
             st.markdown("---")
             st.subheader("Overall Similarity Assessment")
-
             final_score = sum(score for _, score in overall_metrics) / len(overall_metrics)
 
-            # Gauge chart
             fig = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=float(final_score),
@@ -763,36 +707,25 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
                     'axis': {'range': [0, 100]},
                     'bar': {'color': "royalblue"},
                     'steps': [
-                        {'range': [0, 50],  'color': "red"},
+                        {'range': [0, 50], 'color': "red"},
                         {'range': [50, 75], 'color': "orange"},
                         {'range': [75, 90], 'color': "yellow"},
-                        {'range': [90, 100],'color': "green"}
+                        {'range': [90, 100], 'color': "green"}
                     ],
-                    'threshold': {
-                        'line': {'color': "black", 'width': 4},
-                        'thickness': 0.75,
-                        'value': float(final_score)
-                    }
+                    'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': float(final_score)}
                 }
             ))
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Component scores
             score_df = pd.DataFrame(overall_metrics, columns=['Metric', 'Score (%)'])
-            fig = px.bar(
-                score_df,
-                x='Score (%)',
-                y='Metric',
-                orientation='h',
-                title="Component Similarity Scores",
-                color='Score (%)',
-                color_continuous_scale=px.colors.sequential.Viridis,
-                range_color=[0, 100]
-            )
+            fig = px.bar(score_df, x='Score (%)', y='Metric', orientation='h',
+                         title="Component Similarity Scores",
+                         color='Score (%)',
+                         color_continuous_scale=px.colors.sequential.Viridis,
+                         range_color=[0, 100])
             st.plotly_chart(fig, use_container_width=True)
 
-            # Quality assessment
             if final_score >= 90:
                 st.success("🌟 Excellent simulation quality! The simulated data closely matches the original data across all metrics.")
             elif final_score >= 80:
@@ -806,4 +739,5 @@ if analyze_button or st.session_state.get('show_stat_analysis', False):
         st.error(f"Error performing statistical comparison: {str(e)}")
 else:
     st.info("Click the 'Compare Real vs Simulated Data' button above for a comprehensive statistical comparison between your original and simulated data.")
+
 
