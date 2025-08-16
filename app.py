@@ -7,7 +7,7 @@ from utils import load_data
 from tabs.data_preparation import render_data_preparation_tab
 from tabs.item_analysis import render_item_analysis_tab
 from tabs.pattern_extraction import render_pattern_extraction_tab
-from tabs.simulation import render_simulation_tab
+from tabs.simulation import render_simulation_tab  # Now imports from the modular simulation package
 from tabs.reports import render_reports_tab
 
 # Page configuration
@@ -157,7 +157,7 @@ if uploaded_file is not None:
             render_pattern_extraction_tab(df, n_factors)
 
         with tab4:
-            render_simulation_tab(df)
+            render_simulation_tab(df)  # This now uses the modular simulation components
 
         with tab5:
             render_reports_tab(df, analysis_method)
