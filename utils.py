@@ -98,14 +98,32 @@ def cluster_items(df, items, n_clusters=None, threshold=0.7):
         clusters.setdefault(lab, []).append(it)
     return clusters
 
+def clean_dataframe_for_display(df):
+    """Clean DataFrame to make it compatible with Streamlit's Arrow serialization"""
+    df_clean = df.copy()
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            # Convert mixed types to string to avoid Arrow serialization issues
+            df_clean[col] = df_clean[col].astype(str)
+        elif df_clean[col].dtype == 'float64':
+            # Handle NaN values that might cause issues
+            df_clean[col] = df_clean[col].fillna(0.0)
+    return df_clean
+
 def determine_factors(df, items, max_f=5):
     """Determine the optimal number of factors."""
     try:
+        # Clean data before factor analysis
+        clean_data = df[items].dropna()
+        if len(clean_data) < 2:
+            return 1
+            
         fa = FactorAnalyzer(rotation=None)
-        fa.fit(df[items])
+        fa.fit(clean_data)
         ev, _ = fa.get_eigenvalues()
-        return sum(ev > 1)
-    except:
+        return max(1, sum(ev > 1))
+    except Exception as e:
+        print(f"Warning: Factor analysis failed ({str(e)}), defaulting to 1 factor")
         return 1
 
 def extract_weights(df, clusters, n_factors=1, rotation='varimax'):
