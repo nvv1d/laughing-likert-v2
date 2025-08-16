@@ -653,30 +653,34 @@ class EnhancedBiasConfigComponent:
         
         fig.update_layout(height=800, showlegend=True)
         st.plotly_chart(fig, use_container_width=True)
+
+
+def _calculate_composite_distribution(self, baseline_dist):
+    """Calculate composite distribution with all bias effects"""
+    composite = baseline_dist.copy()
     
-    def _calculate_composite_distribution(self, baseline_dist):
-        """Calculate composite distribution with all bias effects"""
-        composite = baseline_dist.copy()
+    for profile in self.bias_profiles:
+        bias_type = profile.get('bias_type', 'high')
+        strength = profile.get('bias_strength', 0.5)
+        percentage = profile.get('population_percentage', 0.3)
         
-        for profile in self.bias_profiles:
-            bias_type = profile.get('bias_type', 'high')
-            strength = profile.get('bias_strength', 0.5)
-            percentage = profile.get('population_percentage', 0.3)
-            
-            # Apply bias effect (simplified calculation)
-            if bias_type == 'high':
-                composite[-2:] = [c * (1 + strength * percentage) for c in composite[-2:]]
-                composite[:-2] = [c * (1 - strength * percentage * 0.3) for c in composite[:-2]]
-            elif bias_type == 'low':
-                composite[:2] = [c * (1 + strength * percentage) for c in composite[:2]]
-                composite[2:] = [c * (1 - strength * percentage * 0.3) for c in composite[2:]]
-            elif bias_type == 'mid':
-                composite[2] = composite[2] * (1 + strength * percentage)
-                composite[:2] + composite[3:] = [c * (1 - strength * percentage * 0.2) for c in composite[:2] + composite[3:]]
-        
-        # Normalize
-        total = sum(composite)
-        return [c / total for c in composite] if total > 0 else composite
+        # Apply bias effect (simplified calculation)
+        if bias_type == 'high':
+            composite[-2:] = [c * (1 + strength * percentage) for c in composite[-2:]]
+            composite[:-2] = [c * (1 - strength * percentage * 0.3) for c in composite[:-2]]
+        elif bias_type == 'low':
+            composite[:2] = [c * (1 + strength * percentage) for c in composite[:2]]
+            composite[2:] = [c * (1 - strength * percentage * 0.3) for c in composite[2:]]
+        elif bias_type == 'mid':
+            composite[2] = composite[2] * (1 + strength * percentage)
+            # Fix the problematic line using list comprehension and enumerate
+            for i, c in enumerate(composite):
+                if i < 2 or i > 2:  # All elements except index 2
+                    composite[i] = c * (1 - strength * percentage * 0.2)
+    
+    # Normalize
+    total = sum(composite)
+    return [c / total for c in composite] if total > 0 else composite
     
     def _add_bias_profile(self, name: str):
         """Add a new bias profile"""
