@@ -68,7 +68,7 @@ def _perform_simulation(df, data_generator, bias_settings, simulation_settings):
                    f"(strength: {bias_settings['bias_strength']}, "
                    f"affected: {bias_settings['bias_percentage']*100:.0f}%)")
             
-            updated_weights = apply_bias_to_weights(
+            updated_weights = apply_enhanced_bias_to_weights(
                 updated_weights, 
                 bias_settings['bias_type'], 
                 bias_settings['bias_strength'], 
