@@ -1,5 +1,5 @@
 import streamlit as st
-from .bias_config import BiasConfigComponent, apply_bias_to_weights
+from .bias_config import EnhancedBiasConfigComponent, apply_enhanced_bias_to_weights
 from .data_generator import DataGenerator
 from .visualization import VisualizationManager
 from .statistical_analysis import StatisticalAnalyzer
@@ -13,7 +13,7 @@ def render_simulation_tab(df):
         return
     
     # Initialize components
-    bias_config = BiasConfigComponent()
+    bias_config = EnhancedBiasConfigComponent()
     data_generator = DataGenerator()
     viz_manager = VisualizationManager()
     stat_analyzer = StatisticalAnalyzer()
