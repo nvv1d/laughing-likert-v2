@@ -1,14 +1,16 @@
-
 import streamlit as st
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import StandardScaler
+from factor_analyzer import FactorAnalyzer
+from scipy.stats import pearsonr
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import re
 from collections import defaultdict
 import json
-from utils import identify_likert_columns, detect_reverse_items, reverse_code, check_sampling, cronbach_alpha, bootstrap_alpha
+from utils import identify_likert_columns, detect_reverse_items, reverse_code, check_sampling, cronbach_alpha, bootstrap_alpha, clean_dataframe_for_display
 
 def detect_scales_by_pattern(columns):
     """
@@ -342,7 +344,7 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
                 # Detailed results table
                 reliability_df = pd.DataFrame(reliability_details)
                 st.dataframe(reliability_df, use_container_width=True)
-                
+
                 # Option to export reliability results
                 if st.button("📥 Export Reliability Analysis"):
                     # Create comprehensive export data
@@ -415,7 +417,7 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
 
                 for scale_name, scale_info in scale_reliability.items():
                     with st.expander(f"📈 {scale_name} (α = {scale_info['alpha']:.3f}, {scale_info['quality']})",
-       expanded=bool(scale_info['alpha'] < 0.7)):  # Auto-expand poor scales
+                       expanded=bool(scale_info['alpha'] < 0.7)):  # Auto-expand poor scales
 
                         col1, col2 = st.columns([2, 1])
 
@@ -653,12 +655,12 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
                     reverse_items_list.markdown(f"### Reverse-coded items:\n**{', '.join(reverse_items)}**")
                 else:
                     reverse_count_container.info("No reverse-coded items detected in this dataset")
-        
+
         # Always show the results, even if not from current button press
         elif 'reverse_items' in st.session_state and st.session_state.reverse_items:
             reverse_count_container.success(f"📋 Detected {len(st.session_state.reverse_items)} reverse-coded items")
             reverse_items_list.markdown(f"### Reverse-coded items:\n**{', '.join(st.session_state.reverse_items)}**")
-        
+
         # Detailed reverse items container (expandable analysis)
         if 'reverse_items' in st.session_state and st.session_state.reverse_items:
             st.markdown("---")
@@ -696,10 +698,10 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
                             st.write("##### After Reverse Coding (Preview)")
                             scale_min = int(df[likert_items].min().min())
                             scale_max = int(df[likert_items].max().max())
-                            
+
                             reversed_values = scale_min + scale_max - df[item]
                             counts = reversed_values.value_counts().sort_index()
-                            
+
                             fig = px.bar(
                                 x=counts.index,
                                 y=counts.values,
@@ -726,5 +728,10 @@ def render_data_preparation_tab(df, min_cats, max_cats, reverse_threshold):
             with col2:
                 st.metric("Bartlett's p-value", f"{sampling['bartlett_p']:.3e}",
                           delta="Significant" if sampling['bartlett_p'] < 0.05 else "Not Significant")
+
+    # Clean the dataframe for display after all operations
+    cleaned_df = clean_dataframe_for_display(df)
+    st.subheader("Processed Data Preview")
+    st.dataframe(cleaned_df, use_container_width=True)
 
     return df
