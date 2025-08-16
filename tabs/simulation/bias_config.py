@@ -661,8 +661,8 @@ class EnhancedBiasConfigComponent:
         st.plotly_chart(fig, use_container_width=True)
         
     def _calculate_composite_distribution(self, baseline_dist):
-    """Calculate composite distribution with all bias effects"""
-    composite = baseline_dist.copy()
+        """Calculate composite distribution with all bias effects"""
+        composite = baseline_dist.copy()
         
         for profile in self.bias_profiles:
             bias_type = profile.get('bias_type', 'high')
