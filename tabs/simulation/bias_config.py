@@ -822,7 +822,12 @@ class EnhancedBiasConfigComponent:
             })
         
         if preview_data:
-            st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
+            # Clean DataFrame for display to avoid Arrow serialization issues
+        preview_df = pd.DataFrame(preview_data)
+        for col in preview_df.columns:
+            if preview_df[col].dtype == 'object':
+                preview_df[col] = preview_df[col].astype(str)
+        st.dataframe(preview_df, use_container_width=True)
     
     def _describe_bias_effect(self, bias_type: str, strength: float) -> str:
         """Describe the expected effect of bias configuration"""
