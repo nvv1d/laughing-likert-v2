@@ -201,5 +201,5 @@ else:
 st.markdown("---")
 st.markdown(
     "Likert Scale Pattern Analysis Tool | "
-    f"Version 1.0 | {datetime.now().year}"
+    f"Version 2.0 | {datetime.now().year}"
 )
