@@ -36,7 +36,13 @@ class EnhancedBiasConfigComponent:
         )
         
         if not self.enable_bias:
-            return self._get_empty_config()
+            return {
+            'enable_bias': False,
+            'bias_profiles': [],
+            'scale_specific_config': {},
+            'distribution_controls': {},
+            'sem_optimization': False
+        }
         
         # Bias configuration tabs
         tab1, tab2, tab3, tab4 = st.tabs([
